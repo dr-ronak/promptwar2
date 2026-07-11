@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { aiService } from '../../services/aiService';
+import { aiService } from '../services/aiService';
 
 // ─── Shared test fixture: a standard weather data snapshot ───────────────────
 const mockWeatherData = {
@@ -150,6 +150,7 @@ describe('aiService.mockGenerateTravelAdvisory()', () => {
   const travelArgs = {
     source: 'Bandra Station',
     destination: 'Andheri East',
+    travelMode: 'fourWheeler',
     weatherData: mockWeatherData
   };
 

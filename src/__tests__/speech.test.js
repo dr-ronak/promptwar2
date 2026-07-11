@@ -4,24 +4,56 @@
  * Tests cover:
  * 1. isSupported() detection
  * 2. stop() calls speechSynthesis.cancel()
- * 3. speak() creates and dispatches a SpeechSynthesisUtterance
+ * 3. speak() dispatches a SpeechSynthesisUtterance for non-empty text
  * 4. speak() strips markdown symbols before speaking
- * 5. speak() does nothing for empty text
- * 6. Rate and pitch are set to correct values
- * 7. onEnd callback is called when utterance ends
- * 8. onError callback is called when utterance errors
+ * 5. speak() does nothing when text is empty
+ * 6. speak() sets utterance.lang to the language's BCP-47 code
+ * 7. onStart is wired directly to utterance.onstart
+ * 8. onEnd callback is invoked when utterance.onend fires
+ * 9. onError callback is invoked when utterance.onerror fires
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { speechService } from '../../utils/speech';
+import { speechService } from '../utils/speech';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Utterance capture utility
+// We use `function` (not arrow) because SpeechSynthesisUtterance is used
+// with `new` in speech.js — arrow functions are not valid constructors.
+// ─────────────────────────────────────────────────────────────────────────────
+let lastUtterance = null;
+
+function setupUtteranceMock() {
+  lastUtterance = null;
+  // Must use `function` syntax — vi.fn wraps it and calls it with `new`
+  global.SpeechSynthesisUtterance = vi.fn(function (text) {
+    this.text = text;
+    this.lang = '';
+    this.voice = null;
+    this.rate = 1;
+    this.pitch = 1;
+    this.onstart = null;
+    this.onend = null;
+    this.onerror = null;
+    lastUtterance = this; // capture for assertions
+  });
+}
+
+beforeEach(() => {
+  setupUtteranceMock();
+  window.speechSynthesis.speak = vi.fn();
+  window.speechSynthesis.cancel = vi.fn();
+  window.speechSynthesis.getVoices = vi.fn(() => []);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('speechService.isSupported()', () => {
   it('returns true when speechSynthesis is available in window', () => {
-    // window.speechSynthesis is mocked in setup.js
     expect(speechService.isSupported()).toBe(true);
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 describe('speechService.stop()', () => {
   it('calls speechSynthesis.cancel()', () => {
     speechService.stop();
@@ -29,95 +61,81 @@ describe('speechService.stop()', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 describe('speechService.speak()', () => {
-  beforeEach(() => {
-    // Reset the speak mock before each test
-    vi.clearAllMocks();
-    window.speechSynthesis.speak = vi.fn();
-    window.speechSynthesis.cancel = vi.fn();
-  });
 
-  it('does nothing when text is empty', () => {
+  it('does nothing (no speak call) when text is empty string', () => {
     speechService.speak('', 'en');
+    // stop() IS called (cancel is called), but speak() must NOT be dispatched
     expect(window.speechSynthesis.speak).not.toHaveBeenCalled();
   });
 
-  it('calls speechSynthesis.speak() with a valid utterance for non-empty text', () => {
+  it('calls speechSynthesis.speak() once for non-empty text', () => {
     speechService.speak('Stay safe during monsoon.', 'en');
+    expect(SpeechSynthesisUtterance).toHaveBeenCalledTimes(1);
     expect(window.speechSynthesis.speak).toHaveBeenCalledTimes(1);
-    expect(SpeechSynthesisUtterance).toHaveBeenCalled();
+  });
+
+  it('calls cancel() before dispatching (stop-first behaviour)', () => {
+    speechService.speak('Alert: heavy rain.', 'en');
+    expect(window.speechSynthesis.cancel).toHaveBeenCalled();
+    // speak should be called after cancel
+    expect(window.speechSynthesis.speak).toHaveBeenCalledTimes(1);
   });
 
   it('strips markdown bold markers (**) from text before speaking', () => {
     speechService.speak('**Stay safe** during monsoon.', 'en');
-    const utteranceArg = SpeechSynthesisUtterance.mock.calls[0][0];
-    expect(utteranceArg).not.toContain('**');
-    expect(utteranceArg).toContain('Stay safe');
+    expect(lastUtterance.text).not.toContain('**');
+    expect(lastUtterance.text).toContain('Stay safe');
   });
 
   it('strips markdown heading markers (#) from text before speaking', () => {
     speechService.speak('## Monsoon Safety\nStay indoors.', 'en');
-    const utteranceArg = SpeechSynthesisUtterance.mock.calls[0][0];
-    expect(utteranceArg).not.toContain('#');
+    expect(lastUtterance.text).not.toContain('#');
   });
 
   it('strips backtick code markers from text before speaking', () => {
     speechService.speak('Use `chlorine tablets` to purify water.', 'en');
-    const utteranceArg = SpeechSynthesisUtterance.mock.calls[0][0];
-    expect(utteranceArg).not.toContain('`');
+    expect(lastUtterance.text).not.toContain('`');
   });
 
-  it('calls speechSynthesis.cancel() first to stop any existing speech', () => {
-    speechService.speak('New alert message.', 'en');
-    expect(window.speechSynthesis.cancel).toHaveBeenCalled();
+  it('sets utterance.lang to the primary BCP-47 code for English (en-IN)', () => {
+    speechService.speak('Hello monsoon.', 'en');
+    expect(lastUtterance.lang).toBe('en-IN');
   });
 
-  it('invokes the onStart callback when speech begins', () => {
+  it('sets utterance.lang to hi-IN for Hindi', () => {
+    speechService.speak('मानसून सुरक्षा।', 'hi');
+    expect(lastUtterance.lang).toBe('hi-IN');
+  });
+
+  it('wires the onStart callback directly to utterance.onstart', () => {
     const onStart = vi.fn();
-
-    // Intercept the utterance instance
-    let capturedUtterance;
-    SpeechSynthesisUtterance.mockImplementationOnce((text) => {
-      capturedUtterance = { text, onstart: null, onend: null, onerror: null };
-      return capturedUtterance;
-    });
-    window.speechSynthesis.speak.mockImplementationOnce(() => {
-      if (capturedUtterance?.onstart) capturedUtterance.onstart();
-    });
-
     speechService.speak('Test onStart', 'en', onStart, null, null);
-    expect(onStart).toHaveBeenCalledTimes(1);
+    // speech.js does: if (onStart) utterance.onstart = onStart;
+    expect(lastUtterance.onstart).toBe(onStart);
   });
 
-  it('invokes the onEnd callback when speech finishes', () => {
+  it('invokes the onEnd callback when utterance.onend fires', () => {
     const onEnd = vi.fn();
-
-    let capturedUtterance;
-    SpeechSynthesisUtterance.mockImplementationOnce((text) => {
-      capturedUtterance = { text, onstart: null, onend: null, onerror: null };
-      return capturedUtterance;
-    });
-    window.speechSynthesis.speak.mockImplementationOnce(() => {
-      if (capturedUtterance?.onend) capturedUtterance.onend();
-    });
-
     speechService.speak('Test onEnd', 'en', null, onEnd, null);
+    // speech.js wraps onEnd inside utterance.onend — trigger it manually
+    lastUtterance.onend();
     expect(onEnd).toHaveBeenCalledTimes(1);
   });
 
-  it('invokes the onError callback on utterance error', () => {
+  it('invokes the onError callback when utterance.onerror fires', () => {
     const onError = vi.fn();
-
-    let capturedUtterance;
-    SpeechSynthesisUtterance.mockImplementationOnce((text) => {
-      capturedUtterance = { text, onstart: null, onend: null, onerror: null };
-      return capturedUtterance;
-    });
-    window.speechSynthesis.speak.mockImplementationOnce(() => {
-      if (capturedUtterance?.onerror) capturedUtterance.onerror(new Error('synthesis error'));
-    });
-
     speechService.speak('Test onError', 'en', null, null, onError);
+    const fakeError = new Error('synthesis-error');
+    lastUtterance.onerror(fakeError);
     expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(fakeError);
+  });
+
+  it('utterance passed to speechSynthesis.speak is the constructed utterance', () => {
+    speechService.speak('Verify utterance reference', 'en');
+    const calledWithArg = window.speechSynthesis.speak.mock.calls[0][0];
+    expect(calledWithArg).toBe(lastUtterance);
   });
 });

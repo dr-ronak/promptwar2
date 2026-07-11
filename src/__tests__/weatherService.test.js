@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { weatherService, CITIES_COORDINATES } from '../../services/weatherService';
+import { weatherService, CITIES_COORDINATES } from '../services/weatherService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. City resolution
@@ -94,8 +94,10 @@ describe('weatherService.processWeatherData() – Risk Engine', () => {
   });
 
   it('calculates medium flood risk for moderate rain', () => {
-    const data = weatherService.processWeatherData(baseCity, makeApiData({ rain: 6, precipSum: 30 }));
+    // floodRiskIndex = 24/12 + 2*1.5 = 2 + 3 = 5.0 → 'Medium' (3 < 5 <= 6, rain <= 5)
+    const data = weatherService.processWeatherData(baseCity, makeApiData({ rain: 2, precipSum: 24 }));
     expect(data.floodRiskIndex).toBeGreaterThan(3);
+    expect(data.floodRiskIndex).toBeLessThanOrEqual(6);
     expect(data.waterloggingRisk).toBe('Medium');
   });
 

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { translations, LANGUAGES } from '../../utils/translations';
+import { translations, LANGUAGES } from '../utils/translations';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Language coverage
